@@ -1,0 +1,118 @@
+//-----------------------------------------------------------------------------
+// Copyright (c) 2012 GarageGames, LLC
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal in the Software without restriction, including without limitation the
+// rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+// sell copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+// IN THE SOFTWARE.
+//-----------------------------------------------------------------------------
+
+singleton ShaderData( Downscale2x_Shader )
+{
+   DXVertexShaderFile 	= $Core::CommonShaderPath @ "/postFX/postFxV.hlsl";
+   DXPixelShaderFile 	= "./hbaoDownscaleP.hlsl";   
+   
+   samplerNames[0] = "$deferredMap";
+   
+   pixVersion = 3.0;
+};
+
+singleton ShaderData( HBAO_Shader )
+{
+   DXVertexShaderFile 	= "./hbaoV.hlsl";
+   DXPixelShaderFile 	= "./hbaoP.hlsl";   
+   
+   samplerNames[0] = "$inputTex";
+   
+   pixVersion = 3.0;
+};
+
+singleton GFXStateBlockData( HBAO_StateBlock )
+{
+   samplersDefined = true;
+   samplerStates[0] = SamplerClampPoint;
+};
+
+function HBAOPostFX::setShaderConsts( %this )
+{
+   %this->occlusion.setShaderConst("$offsetAngle", "0.0");
+}
+
+function HBAOPostFX::preProcess( %this )
+{
+   if (%this.tmpFov != $cameraFov)
+   {
+      %this.tmpFov = $cameraFov;
+      %tanHalfFOVY = mTan(mDegtoRad(%this.tmpFov) * 0.5);
+      
+      %this->occlusion.setShaderConst("$tanHalfFovY", %tanHalfFOVY);
+   }
+}
+
+function HBAOPostFX::onAdd(%this)
+{
+   //Register the postFX with the manager
+   PostFXManager.registerPostEffect(%this);
+}
+
+function HBAOPostFX::onEnabled( %this )
+{
+   return true;
+}
+
+function HBAOPostFX::onDisabled( %this )
+{
+   return true;
+}
+
+singleton PostEffect( HBAOPostFX )
+{
+   enabled = false;
+   allowReflectPass = false;
+     
+   //renderTime = "PFXBeforeBin";
+   //renderBin = "ProbeBin";   
+   //renderPriority = 10;
+
+   shader = Downscale2x_Shader;
+   stateBlock = HBAO_StateBlock;
+   texture[0] = "#deferred";
+   target = "#downscaled_2x";
+   targetScale = "0.5 0.5";
+   targetFormat = "GFXFormatR16G16B16A16F";
+
+   new PostEffect()
+   {
+      internalName = "occlusion";
+      allowReflectPass = false;
+
+      shader = HBAO_Shader;
+      stateBlock = HBAO_StateBlock;
+      texture[0] = "#downscaled_2x";
+      target = "#hbaoRaw";
+      targetFormat = "GFXFormatL8";
+   };
+
+   new PostEffect()
+   {
+      allowReflectPass = false;
+
+      shader = PFX_PassthruShader;
+      stateBlock = HBAO_StateBlock;
+      texture[0] = "#hbaoRaw";
+      target = "$backBuffer";
+   };
+};
