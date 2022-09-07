@@ -25,8 +25,10 @@
 #include "core/rendering/shaders/gl/torque.glsl"
 #include "shadergen:/autogenConditioners.h"
 
+#line 28
+
 #define KERNEL_SAMPLES 4
-const vec2 KERNEL[9] = vec2[](
+const vec2 KERNEL[4] = vec2[](
   vec2( 0.5, 0.5),
   vec2( 0.5,-0.5),
   vec2(-0.5,-0.5),
@@ -55,5 +57,5 @@ void main()
    float adaptedLum = texture( luminanceTex, vec2( 0.5, 0.5 ) ).r;
    float lum = (g_fMiddleGray / (adaptedLum + 0.0001));
    
-   return downSample * weight * lum;
+   OUT_col = downSample * weight * lum;
 }
