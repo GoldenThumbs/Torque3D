@@ -23,15 +23,34 @@
 #include "core/rendering/shaders/shaderModelAutoGen.hlsl"
 #include "core/rendering/shaders/postFX/postFx.hlsl"
 
+#define KERNEL_SAMPLES 4
+static const float2 KERNEL[4] = {
+  float2( 0.5f, 0.5f),
+  float2( 0.5f,-0.5f),
+  float2(-0.5f,-0.5f),
+  float2(-0.5f, 0.5f)
+};
+
 TORQUE_UNIFORM_SAMPLER2D(deferredMap, 0);
-//uniform float2 texSize0;
+uniform float2 texSize0;
 uniform float2 targetSize;
 uniform float2 oneOverTargetSize;
 
 float4 main( PFXVertToPix IN ) : TORQUE_TARGET0
 {
-   float2 coords = floor(IN.uv0 * targetSize) * oneOverTargetSize;
-   float4 texel = TORQUE_DEFERRED_UNCONDITION(deferredMap, coords);
+   float4 selTexel = float4(1.0f, 1.0f, 1.0f, 1.0f);
+   for (int i=0; i<KERNEL_SAMPLES; i++)
+   {
+      float2 coords = floor(IN.uv0 * targetSize) * oneOverTargetSize + KERNEL[i] / texSize0;
+      float4 texel = TORQUE_DEFERRED_UNCONDITION(deferredMap, coords);
 
-   return texel;
+      if (texel.a < selTexel.a)
+      {
+         selTexel = texel;
+      }
+   }
+
+   selTexel.xyz = selTexel.xyz * 0.5f + 0.5f;
+
+   return selTexel;
 }

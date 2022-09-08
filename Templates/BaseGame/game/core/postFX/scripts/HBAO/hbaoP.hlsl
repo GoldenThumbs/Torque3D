@@ -22,93 +22,103 @@
 
 #include "./hbaoInc.hlsl"
 
-#define MARCHING_STEPS 4
+#define MARCHING_SAMPLES 4
 #define KERNEL_SAMPLES 16
-static const float3 KERNEL[16] = {
-   float3(0.176777, 0.000000, 0.135199),
-   float3(-0.225780, 0.206818, 0.124385),
-   float3(0.034587, -0.393769, 0.113756),
-   float3(0.284530, 0.371204, 0.103322),
-   float3(-0.522210, -0.092451, 0.093096),
-   float3(0.494753, -0.314594, 0.083089),
-   float3(-0.165602, 0.615488, 0.073318),
-   float3(-0.315405, -0.607676, 0.063802),
-   float3(0.684569, 0.250232, 0.054561),
-   float3(-0.712353, 0.293773, 0.045625),
-   float3(0.343624, -0.733602, 0.037026),
-   float3(0.253403, 0.809035, 0.028812),
-   float3(-0.764550, -0.443523, 0.021045),
-   float3(0.897228, -0.196804, 0.013819),
-   float3(-0.547908, 0.778490, 0.007297),
-   float3(-0.125948, -0.976159, 0.001848)
+static const float4 KERNEL[16] = {
+   float4(0.176777f, 0.000000f, 0.386483f, 0.307675f),
+   float4(-0.225780f, 0.206818f, 0.032234f, 0.200634f),
+   float4(0.034587f, -0.393769f, 0.261175f, 0.142290f),
+   float4(0.284530f, 0.371204f, 0.151057f, 0.103437f),
+   float4(-0.522210f, -0.092451f, 0.040588f, 0.075645f),
+   float4(0.494753f, -0.314594f, 0.094695f, 0.055082f),
+   float4(-0.165602f, 0.615488f, 0.047261f, 0.039622f),
+   float4(-0.315405f, -0.607676f, 0.267006f, 0.027943f),
+   float4(0.684569f, 0.250232f, 0.046437f, 0.019153f),
+   float4(-0.712353f, 0.293773f, 0.224330f, 0.012619f),
+   float4(0.343624f, -0.733602f, 0.072014f, 0.007864f),
+   float4(0.253403f, 0.809035f, 0.106099f, 0.004523f),
+   float4(-0.764550f, -0.443523f, 0.112595f, 0.002299f),
+   float4(0.897228f, -0.196804f, 0.073468f, 0.000947f),
+   float4(-0.547908f, 0.778490f, 0.023097f, 0.000253f),
+   float4(-0.125948f, -0.976159f, 0.227789f, 0.000016f)
 };
 
 TORQUE_UNIFORM_SAMPLER2D(inputTex, 0);
-uniform float offsetAngle;
 uniform float2 nearFar;
+uniform float2 targetSize;
 uniform float targetRatio;
-uniform float2 oneOverTargetSize;
 
 float3 getVSPosition(float depth, float2 uv, float4 NDCtoVSC)
 {
    return float3(-depth * (uv * NDCtoVSC.xy + NDCtoVSC.zw), -depth);
 }
 
+float2 getUVFromVSPosition(float3 pos, float4 NDCtoVSC)
+{
+   return ((pos.xy / pos.z) - NDCtoVSC.zw) / NDCtoVSC.xy;
+}
+
+float tapOcclusion(float2 uv, float range, float3 p, float3 n, float4 NDCtoVSC)
+{
+   float sampleDepth = TORQUE_TEX2D( inputTex, uv ).a * (nearFar.y - nearFar.x);
+   float3 v = getVSPosition(sampleDepth, uv, NDCtoVSC) - p;
+   
+   float rcpLen = rsqrt(dot(v, v));
+   float d = dot(n, v) * rcpLen;
+   float w = smoothstep(0.0f, 1.0f, range * rcpLen * 0.5f);
+   return saturate(d - 0.25f) * w;
+}
+
 float4 main(HBAOVertToPix IN) : TORQUE_TARGET0
 {
-   const float aoRange = 16.0f;
-   const float rcpSteps = 1.0 / MARCHING_STEPS;
-   float clipping = nearFar.y - nearFar.x;
+   const float rcpMarch = 1.0 / MARCHING_SAMPLES;
+   const float aoRange = 0.5f;
     
    float4 deferred = TORQUE_TEX2D( inputTex, IN.uv0 );
+   float depth = deferred.a * (nearFar.y - nearFar.x);
 
-   float3 normal = deferred.xyz;
-   normal.y *= -1;
-   normal = normal.xzy;
+   if (depth > nearFar.y * 0.99f)
+      return float4(1.0, 1.0, 1.0, 1.0);
 
-   float depth = deferred.a;
-   float3 position = getVSPosition(depth * clipping, IN.uv0, IN.NDCtoVSC);
+   float3 p = getVSPosition(depth, IN.uv0, IN.NDCtoVSC);
+
+   float3 normal = normalize(deferred.xzy - 0.5f);
+   normal.z = -normal.z;
+
+   float2 noiseMapUV = IN.uv0 * targetSize;
+   float ign = fmod(52.9829189f * fmod(0.06711056f*noiseMapUV.x + 0.00583715f*noiseMapUV.y, 1.0f), 1.0f) * M_2PI_F;
     
-   if (depth > 0.999999f)
-      return float4(0.0f, 0.0f, 0.0f, 1.0f);
-   
-   float2x2 rotMat = float2x2(
-      cos(offsetAngle * 0.01745329251f),-sin(offsetAngle * 0.01745329251f),
-      sin(offsetAngle * 0.01745329251f), cos(offsetAngle * 0.01745329251f));
-    
-   float rangeRad = aoRange / position.z;
-   float rangeStep = rangeRad / MARCHING_STEPS;
+   float2x2 noise = float2x2(
+      cos(ign),-sin(ign),
+      sin(ign), cos(ign));
+
+   float aoScale = max(0.05f, aoRange / depth);
 
    float occlusion = 0.0f;
 
    [unroll]
    for (int i=0; i<KERNEL_SAMPLES; i++)
    {
-      float3 offsetWeight = KERNEL[i];
-      float2 offset = mul(rotMat, offsetWeight.xy);
-      offset.x *= targetRatio;
-      float weight = offsetWeight.z;
+      float4 k = KERNEL[i];
+
+      float3 offset = k.xyz * aoScale;
+      offset.y *= targetRatio;
+      float3 offsetStep = offset * rcpMarch;
       
-      float topOcc = 0.0f;
+      float topAO = 0.0f;
       [unroll]
-      for (int j=0; j<MARCHING_STEPS; j++)
+      for (int j=0; j<MARCHING_SAMPLES; j++)
       {
-         float2 stepOffset = float(j+1) * rangeStep * offset * oneOverTargetSize;
-         
-         float sampleD = TORQUE_TEX2D( inputTex, IN.uv0 + stepOffset ).a;
-         float3 sampleP = getVSPosition(sampleD * clipping, IN.uv0 + stepOffset, IN.NDCtoVSC);
-         float3 V = sampleP - position;
+         float3 ray = offsetStep * float(j+1);
+         float2 coords = mul(noise, ray.xy);
 
-         float VdV = dot(V, V);
-         float NdV = M_HALFPI_F - acos(dot(normal, V) * rsqrt(VdV));
-
-         topOcc += max(0.0f, sin(NdV));
+         float ao_1 = tapOcclusion(IN.uv0 + coords, aoRange, p, normal, IN.NDCtoVSC);
+         float ao_2 = tapOcclusion(IN.uv0 - coords, aoRange, p, normal, IN.NDCtoVSC);
+         topAO = lerp((ao_1 + ao_2) * 0.5f, 1.0f, topAO);
       }
-
-      occlusion += topOcc * weight;
+      occlusion += topAO * k.w;
    }
-    occlusion *= rcpSteps;
-    occlusion = 1.0 - occlusion;
+   occlusion = 1.0 - occlusion;
 
    return float4(occlusion, occlusion, occlusion, 1.0f);
 }

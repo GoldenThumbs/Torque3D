@@ -40,6 +40,12 @@ singleton ShaderData( HBAO_Shader )
    pixVersion = 3.0;
 };
 
+singleton GFXStateBlockData( HBAO_Downscale_StateBlock )
+{
+   samplersDefined = true;
+   samplerStates[0] = SamplerClampLinear;
+};
+
 singleton GFXStateBlockData( HBAO_StateBlock )
 {
    samplersDefined = true;
@@ -48,7 +54,6 @@ singleton GFXStateBlockData( HBAO_StateBlock )
 
 function HBAOPostFX::setShaderConsts( %this )
 {
-   %this->occlusion.setShaderConst("$offsetAngle", "0.0");
 }
 
 function HBAOPostFX::preProcess( %this )
@@ -88,11 +93,11 @@ singleton PostEffect( HBAOPostFX )
    //renderPriority = 10;
 
    shader = Downscale2x_Shader;
-   stateBlock = HBAO_StateBlock;
+   stateBlock = HBAO_Downscale_StateBlock;
    texture[0] = "#deferred";
    target = "#downscaled_2x";
    targetScale = "0.5 0.5";
-   targetFormat = "GFXFormatR16G16B16A16F";
+   targetFormat = "GFXFormatR16G16B16A16f";
 
    new PostEffect()
    {
