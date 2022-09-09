@@ -98,6 +98,7 @@ singleton PostEffect( HBAOPostFX )
    target = "#downscaled_2x";
    targetScale = "0.5 0.5";
    targetFormat = "GFXFormatR16G16B16A16f";
+   targetViewport = "PFXTargetViewport_NamedInTexture0";
 
    new PostEffect()
    {
@@ -109,6 +110,7 @@ singleton PostEffect( HBAOPostFX )
       texture[0] = "#downscaled_2x";
       target = "#hbaoRaw";
       targetFormat = "GFXFormatL8";
+      targetViewport = "PFXTargetViewport_NamedInTexture0";
    };
 
    new PostEffect()

@@ -24,13 +24,14 @@
 
 uniform float tanHalfFovY;
 uniform float targetRatio;
+uniform float4 rtParams0;
 
 HBAOVertToPix main( HBAOVert IN )
 {
    HBAOVertToPix OUT;
 
    OUT.hpos = float4(IN.pos, 1.0);
-   OUT.uv0 = IN.uv;
+   OUT.uv0 = viewportCoordToRenderTarget( IN.uv, rtParams0 );
 
    float tanHalfFovX = tanHalfFovY * targetRatio;
 

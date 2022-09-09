@@ -22,103 +22,119 @@
 
 #include "./hbaoInc.hlsl"
 
-#define MARCHING_SAMPLES 4
-#define KERNEL_SAMPLES 16
-static const float4 KERNEL[16] = {
-   float4(0.176777f, 0.000000f, 0.386483f, 0.307675f),
-   float4(-0.225780f, 0.206818f, 0.032234f, 0.200634f),
-   float4(0.034587f, -0.393769f, 0.261175f, 0.142290f),
-   float4(0.284530f, 0.371204f, 0.151057f, 0.103437f),
-   float4(-0.522210f, -0.092451f, 0.040588f, 0.075645f),
-   float4(0.494753f, -0.314594f, 0.094695f, 0.055082f),
-   float4(-0.165602f, 0.615488f, 0.047261f, 0.039622f),
-   float4(-0.315405f, -0.607676f, 0.267006f, 0.027943f),
-   float4(0.684569f, 0.250232f, 0.046437f, 0.019153f),
-   float4(-0.712353f, 0.293773f, 0.224330f, 0.012619f),
-   float4(0.343624f, -0.733602f, 0.072014f, 0.007864f),
-   float4(0.253403f, 0.809035f, 0.106099f, 0.004523f),
-   float4(-0.764550f, -0.443523f, 0.112595f, 0.002299f),
-   float4(0.897228f, -0.196804f, 0.073468f, 0.000947f),
-   float4(-0.547908f, 0.778490f, 0.023097f, 0.000253f),
-   float4(-0.125948f, -0.976159f, 0.227789f, 0.000016f)
+#define MIP_OFFSET_BASE 4.3
+#define KERNEL_SAMPLES 32
+static const float4 KERNEL[32] = {
+   float4(0.054409f, 0.000000f, 0.869477f, -0.201781f),
+   float4(-0.086568f, 0.079298f, 0.731834f, -0.450411f),
+   float4(0.014688f, -0.167218f, 0.631667f, -0.662764f),
+   float4(0.129240f, 0.168609f, 0.550433f, -0.861360f),
+   float4(-0.249426f, -0.044158f, 0.481790f, -1.053523f),
+   float4(0.245989f, -0.156415f, 0.422512f, -1.242936f),
+   float4(-0.085134f, 0.316415f, 0.370646f, -1.431887f),
+   float4(-0.166854f, -0.321469f, 0.324882f, -1.622010f),
+   float4(0.371326f, 0.135732f, 0.284282f, -1.814605f),
+   float4(-0.395089f, 0.162934f, 0.248136f, -2.010797f),
+   float4(0.194436f, -0.415101f, 0.215890f, -2.211631f),
+   float4(0.146018f, 0.466189f, 0.187098f, -2.418135f),
+   float4(-0.447964f, -0.259868f, 0.161391f, -2.631365f),
+   float4(0.533857f, -0.117099f, 0.138461f, -2.852449f),
+   float4(-0.330701f, 0.469874f, 0.118042f, -3.082624f),
+   float4(-0.077040f, -0.597093f, 0.099906f, -3.323285f),
+   float4(0.480707f, 0.405624f, 0.083851f, -3.576035f),
+   float4(-0.654880f, 0.026671f, 0.069697f, -3.842754f),
+   float4(0.483329f, -0.480341f, 0.057285f, -4.125687f),
+   float4(-0.033151f, 0.706222f, 0.046470f, -4.427565f),
+   float4(-0.468706f, -0.562507f, 0.037117f, -4.751771f),
+   float4(0.750172f, 0.101524f, 0.029105f, -5.102586f),
+   float4(-0.641852f, 0.445814f, 0.022319f, -5.485553f),
+   float4(0.177488f, -0.785849f, 0.016653f, -5.908043f),
+   float4(0.411771f, 0.720068f, 0.012005f, -6.380184f),
+   float4(-0.812453f, -0.260018f, 0.008278f, -6.916442f),
+   float4(0.795875f, -0.366791f, 0.005379f, -7.538549f),
+   float4(-0.348027f, 0.829280f, 0.003214f, -8.281390f),
+   float4(-0.311199f, -0.868019f, 0.001693f, -9.206408f),
+   float4(0.835724f, 0.440371f, 0.000721f, -10.438111f),
+   float4(-0.935285f, 0.245435f, 0.000199f, -12.298230f),
+   float4(0.535856f, -0.831295f, 0.000013f, -16.277932f)
 };
 
 TORQUE_UNIFORM_SAMPLER2D(inputTex, 0);
 uniform float2 nearFar;
 uniform float2 targetSize;
-uniform float targetRatio;
+uniform float2 oneOverTargetSize;
 
 float3 getVSPosition(float depth, float2 uv, float4 NDCtoVSC)
 {
    return float3(-depth * (uv * NDCtoVSC.xy + NDCtoVSC.zw), -depth);
 }
 
-float2 getUVFromVSPosition(float3 pos, float4 NDCtoVSC)
+float tapOcclusion(float2 uv, float range, float3 p, float3 n, float wMod, float lvl, float4 NDCtoVSC, inout float weight)
 {
-   return ((pos.xy / pos.z) - NDCtoVSC.zw) / NDCtoVSC.xy;
-}
-
-float tapOcclusion(float2 uv, float range, float3 p, float3 n, float4 NDCtoVSC)
-{
-   float sampleDepth = TORQUE_TEX2D( inputTex, uv ).a * (nearFar.y - nearFar.x);
+   float sampleDepth = TORQUE_TEX2DLOD( inputTex, float4(uv, 0, lvl) ).a * (nearFar.y - nearFar.x);
    float3 v = getVSPosition(sampleDepth, uv, NDCtoVSC) - p;
-   
+   float w = 1.0f;
+   float reduct = max(0.0f, v.z);
+   reduct = saturate(2.0 - reduct / range);
+   w = reduct;
+   w *= wMod;
    float rcpLen = rsqrt(dot(v, v));
    float d = dot(n, v) * rcpLen;
-   float w = smoothstep(0.0f, 1.0f, range * rcpLen * 0.5f);
-   return saturate(d - 0.25f) * w;
+   float f = smoothstep(0.0, 1.0, range * rcpLen * 0.5f);
+   weight += w;
+   return saturate(d * w) * f;
 }
 
 float4 main(HBAOVertToPix IN) : TORQUE_TARGET0
 {
-   const float rcpMarch = 1.0 / MARCHING_SAMPLES;
-   const float aoRange = 0.5f;
-    
-   float4 deferred = TORQUE_TEX2D( inputTex, IN.uv0 );
-   float depth = deferred.a * (nearFar.y - nearFar.x);
+   const float aoRange = 1.2f;
 
-   if (depth > nearFar.y * 0.99f)
+   float2 fragPos = trunc(IN.uv0 * targetSize);
+   float2 uv = fragPos * oneOverTargetSize + oneOverTargetSize * 0.25f;
+    
+   float4 deferred = TORQUE_TEX2DLOD( inputTex, float4(uv, 0, 0) );
+
+   if (deferred.a > 0.999f)
       return float4(1.0, 1.0, 1.0, 1.0);
 
-   float3 p = getVSPosition(depth, IN.uv0, IN.NDCtoVSC);
-
+   float depth = deferred.a * (nearFar.y - nearFar.x);
+   float3 p = getVSPosition(depth, uv, IN.NDCtoVSC);
    float3 normal = normalize(deferred.xzy - 0.5f);
    normal.z = -normal.z;
 
-   float2 noiseMapUV = IN.uv0 * targetSize;
-   float ign = fmod(52.9829189f * fmod(0.06711056f*noiseMapUV.x + 0.00583715f*noiseMapUV.y, 1.0f), 1.0f) * M_2PI_F;
-    
-   float2x2 noise = float2x2(
-      cos(ign),-sin(ign),
-      sin(ign), cos(ign));
+   float ign = fmod(52.9829189f * fmod(0.06711056f*fragPos.x + 0.00583715f*fragPos.y, 1.0f), 1.0f) * M_2PI_F;
 
-   float aoScale = max(0.05f, aoRange / depth);
+   float2 pixDir = p.z * IN.NDCtoVSC.xy * oneOverTargetSize;
+   float aoScale = max(0.05f, (0.85f * aoRange) / pixDir.x);
+
+   const float globalMipOffset = MIP_OFFSET_BASE;
+   float mipOffset = log2(aoScale) + globalMipOffset;
+
+   float screenBorder = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+   screenBorder = saturate(screenBorder * 10.0f + 0.6f);
+   aoScale *= screenBorder;
+
+   float2x2 noise = float2x2(
+      cos(ign) * aoScale,-sin(ign) * aoScale,
+      sin(ign) * aoScale, cos(ign) * aoScale);
+
+   p *= 0.9992f;
 
    float occlusion = 0.0f;
+   float weight = 0.0f;
 
    [unroll]
    for (int i=0; i<KERNEL_SAMPLES; i++)
    {
       float4 k = KERNEL[i];
 
-      float3 offset = k.xyz * aoScale;
-      offset.y *= targetRatio;
-      float3 offsetStep = offset * rcpMarch;
-      
-      float topAO = 0.0f;
-      [unroll]
-      for (int j=0; j<MARCHING_SAMPLES; j++)
-      {
-         float3 ray = offsetStep * float(j+1);
-         float2 coords = mul(noise, ray.xy);
+      float2 offset = mul(noise, k.xy);
+      offset = round(offset);
 
-         float ao_1 = tapOcclusion(IN.uv0 + coords, aoRange, p, normal, IN.NDCtoVSC);
-         float ao_2 = tapOcclusion(IN.uv0 - coords, aoRange, p, normal, IN.NDCtoVSC);
-         topAO = lerp((ao_1 + ao_2) * 0.5f, 1.0f, topAO);
-      }
-      occlusion += topAO * k.w;
+      float ao = tapOcclusion(offset * oneOverTargetSize + uv, aoRange, p, normal, k.z, k.w + mipOffset, IN.NDCtoVSC, weight);
+      occlusion += ao;
    }
-   occlusion = 1.0 - occlusion;
+   occlusion = 1.0 - (occlusion / max(0.001f, weight) * 2.0f);
 
    return float4(occlusion, occlusion, occlusion, 1.0f);
 }
