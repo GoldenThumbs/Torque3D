@@ -23,34 +23,56 @@
 #include "core/rendering/shaders/shaderModelAutoGen.hlsl"
 #include "core/rendering/shaders/postFX/postFx.hlsl"
 
-#define KERNEL_SAMPLES 4
-static const float2 KERNEL[4] = {
-  float2( 0.5f, 0.5f),
-  float2(-0.5f, 0.5f),
-  float2(-0.5f,-0.5f),
-  float2( 0.5f,-0.5f)
-};
+#define BLUR_ITER 2
 
-TORQUE_UNIFORM_SAMPLER2D(deferredMap, 0);
-uniform float2 texSize0;
-uniform float2 targetSize;
+TORQUE_UNIFORM_SAMPLER2D(aoMap, 0);
+TORQUE_UNIFORM_SAMPLER2D(infoTex, 1);
+uniform float2 blurDir;
+
+uniform float2 nearFar;
 uniform float2 oneOverTargetSize;
+
+float gaussWeight(float x, float mu, float sigma)
+{
+   float d = x - mu;
+   return exp2(-d*d * rcp(2 * sigma*sigma));
+}
+
+float gaussBlur(float2 uv, float2 offset, float r, float depth, inout float weight)
+{
+   float4 input = TORQUE_TEX2DLOD(infoTex, float4(uv + offset, 0, 0));
+   float ao = TORQUE_TEX2DLOD(aoMap, float4(uv + offset, 0, 0)).r;
+   float z = input.a * (nearFar.y - nearFar.x);
+
+   float diff = abs(z - depth) * 40.0f;
+
+   const float sigma = BLUR_ITER * 0.5f;
+   float w = gaussWeight(r, diff, sigma);
+
+   weight += w;
+   return ao * w;
+}
 
 float4 main( PFXVertToPix IN ) : TORQUE_TARGET0
 {
-   float4 selTexel = float4(1.0f, 1.0f, 1.0f, 1.0f);
-   for (int i=0; i<KERNEL_SAMPLES; i++)
-   {
-      float2 coords = floor(IN.uv0 * targetSize) * oneOverTargetSize + KERNEL[i] / texSize0;
-      float4 texel = TORQUE_DEFERRED_UNCONDITION(deferredMap, coords);
+   float4 input = TORQUE_TEX2DLOD(infoTex, float4(IN.uv0, 0, 0));
+   float ao = TORQUE_TEX2DLOD(aoMap, float4(IN.uv0, 0, 0)).r;
+   float z = input.a * (nearFar.y - nearFar.x);
+   float weight = 1.0f;
 
-      if (texel.a < selTexel.a)
-      {
-         selTexel = texel;
-      }
+   for (int i=1; i<=BLUR_ITER; i++)
+   {
+      float2 offset = oneOverTargetSize * float(i) * blurDir;
+      ao += gaussBlur(IN.uv0, offset, float(i), z, weight);
    }
 
-   selTexel.xyz = selTexel.xyz * 0.5f + 0.5f;
+   for (int j=1; j<=BLUR_ITER; j++)
+   {
+      float2 offset = oneOverTargetSize * -float(j) * blurDir;
+      ao += gaussBlur(IN.uv0, offset, float(j), z, weight);
+   }
 
-   return selTexel;
+   ao /= weight;
+
+   return float4(ao, input.yzw);
 }

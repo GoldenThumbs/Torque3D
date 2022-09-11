@@ -20,26 +20,13 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
-#include "./hbaoInc.hlsl"
+#include "core/rendering/shaders/postFX/postFx.hlsl"
 
-uniform float tanHalfFovY;
-uniform float targetRatio;
-uniform float4 rtParams0;
+TORQUE_UNIFORM_SAMPLER2D(aoMap, 0);
 
-HBAOVertToPix main( HBAOVert IN )
+float4 main( PFXVertToPix IN ) : TORQUE_TARGET0
 {
-   HBAOVertToPix OUT;
+   float4 input = TORQUE_TEX2DLOD(aoMap, float4(IN.uv0, 0, 0));
 
-   OUT.hpos = float4(IN.pos, 1.0);
-   OUT.uv0 = viewportCoordToRenderTarget( IN.uv, rtParams0 );
-
-   float tanHalfFovX = tanHalfFovY * targetRatio;
-
-   OUT.NDCtoVSC = float4(
-      tanHalfFovX *-2.0f, tanHalfFovY * 2.0f,
-      tanHalfFovX * 1.0f, tanHalfFovY *-1.0f);
-   
-   OUT.wsEyeRay = IN.wsEyeRay;
-
-   return OUT;
+   return float4(1.0f - input.xxx, 1.0f);
 }

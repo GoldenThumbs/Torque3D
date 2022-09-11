@@ -60,16 +60,15 @@ static const float4 KERNEL[32] = {
 };
 
 TORQUE_UNIFORM_SAMPLER2D(inputTex, 0);
+uniform float aoRange;
+uniform float aoStrength;
+uniform float aoBias;
+
 uniform float2 nearFar;
 uniform float2 targetSize;
 uniform float2 oneOverTargetSize;
 
-float3 getVSPosition(float depth, float2 uv, float4 NDCtoVSC)
-{
-   return float3(-depth * (uv * NDCtoVSC.xy + NDCtoVSC.zw), -depth);
-}
-
-float tapOcclusion(float2 uv, float range, float3 p, float3 n, float wMod, float lvl, float4 NDCtoVSC, inout float weight)
+float tapOcclusion(float2 uv, float range, float3 p, float3 n, float weightMod, float lvl, float bias, float4 NDCtoVSC, inout float weight)
 {
    float sampleDepth = TORQUE_TEX2DLOD( inputTex, float4(uv, 0, lvl) ).a * (nearFar.y - nearFar.x);
    float3 v = getVSPosition(sampleDepth, uv, NDCtoVSC) - p;
@@ -77,30 +76,28 @@ float tapOcclusion(float2 uv, float range, float3 p, float3 n, float wMod, float
    float reduct = max(0.0f, v.z);
    reduct = saturate(2.0 - reduct / range);
    w = reduct;
-   w *= wMod;
+   w *= weightMod;
    float rcpLen = rsqrt(dot(v, v));
    float d = dot(n, v) * rcpLen;
    float f = smoothstep(0.0, 1.0, range * rcpLen * 0.5f);
    weight += w;
-   return saturate(d * w) * f;
+   return saturate((d - bias) * w) * f;
 }
 
 float4 main(HBAOVertToPix IN) : TORQUE_TARGET0
 {
-   const float aoRange = 1.2f;
-
    float2 fragPos = trunc(IN.uv0 * targetSize);
    float2 uv = fragPos * oneOverTargetSize + oneOverTargetSize * 0.25f;
     
    float4 deferred = TORQUE_TEX2DLOD( inputTex, float4(uv, 0, 0) );
 
-   if (deferred.a > 0.999f)
-      return float4(1.0, 1.0, 1.0, 1.0);
-
    float depth = deferred.a * (nearFar.y - nearFar.x);
    float3 p = getVSPosition(depth, uv, IN.NDCtoVSC);
    float3 normal = normalize(deferred.xzy - 0.5f);
    normal.z = -normal.z;
+
+   if (deferred.a > 0.999f)
+      return float4(0.0, normal.xy * 0.5f + 0.5f, deferred.a);
 
    float ign = fmod(52.9829189f * fmod(0.06711056f*fragPos.x + 0.00583715f*fragPos.y, 1.0f), 1.0f) * M_2PI_F;
 
@@ -131,10 +128,10 @@ float4 main(HBAOVertToPix IN) : TORQUE_TARGET0
       float2 offset = mul(noise, k.xy);
       offset = round(offset);
 
-      float ao = tapOcclusion(offset * oneOverTargetSize + uv, aoRange, p, normal, k.z, k.w + mipOffset, IN.NDCtoVSC, weight);
+      float ao = tapOcclusion(offset * oneOverTargetSize + uv, aoRange, p, normal, k.z, k.w + mipOffset, aoBias, IN.NDCtoVSC, weight);
       occlusion += ao;
    }
-   occlusion = 1.0 - (occlusion / max(0.001f, weight) * 2.0f);
+   occlusion = saturate(occlusion / max(0.001f, weight) * aoStrength);
 
-   return float4(occlusion, occlusion, occlusion, 1.0f);
+   return float4(occlusion, normal.xy * 0.5f + 0.5f, deferred.a);
 }

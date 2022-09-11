@@ -20,6 +20,10 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+$PostFX::HBAOPostFX::radius = 1.2;
+$PostFX::HBAOPostFX::strength = 2.0;
+$PostFX::HBAOPostFX::bias = 0.1;
+
 singleton ShaderData( Downscale2x_Shader )
 {
    DXVertexShaderFile 	= $Core::CommonShaderPath @ "/postFX/postFxV.hlsl";
@@ -40,20 +44,52 @@ singleton ShaderData( HBAO_Shader )
    pixVersion = 3.0;
 };
 
-singleton GFXStateBlockData( HBAO_Downscale_StateBlock )
+singleton ShaderData( Blur_Shader )
+{
+   DXVertexShaderFile 	= $Core::CommonShaderPath @ "/postFX/postFxV.hlsl";
+   DXPixelShaderFile 	= "./hbaoBlurP.hlsl";   
+   
+   samplerNames[0] = "$aoMap";
+   samplerNames[1] = "$infoTex";
+   
+   pixVersion = 3.0;
+};
+
+singleton ShaderData( Upscale_Shader )
+{
+   DXVertexShaderFile 	= $Core::CommonShaderPath @ "/postFX/postFxV.hlsl";
+   DXPixelShaderFile 	= "./hbaoUpscaleP.hlsl";   
+   
+   samplerNames[0] = "$deferredMap";
+   samplerNames[1] = "$aoMap";
+   samplerNames[2] = "$aoLerpTex";
+   samplerNames[3] = "$infoTex";
+   
+   pixVersion = 3.0;
+};
+
+singleton GFXStateBlockData( HBAO_Blur_StateBlock )
 {
    samplersDefined = true;
    samplerStates[0] = SamplerClampLinear;
+   samplerStates[1] = SamplerClampLinear;
 };
 
 singleton GFXStateBlockData( HBAO_StateBlock )
 {
    samplersDefined = true;
    samplerStates[0] = SamplerClampPoint;
+   samplerStates[1] = SamplerClampPoint;
+   samplerStates[2] = SamplerClampLinear;
+   samplerStates[3] = SamplerClampPoint;
 };
 
 function HBAOPostFX::setShaderConsts( %this )
 {
+   %hbao = %this->occlusion;
+   %hbao.setShaderConst("$aoRange", $PostFX::HBAOPostFX::radius);
+   %hbao.setShaderConst("$aoStrength", $PostFX::HBAOPostFX::strength);
+   %hbao.setShaderConst("$aoBias", $PostFX::HBAOPostFX::bias);
 }
 
 function HBAOPostFX::preProcess( %this )
@@ -64,6 +100,10 @@ function HBAOPostFX::preProcess( %this )
       %tanHalfFOVY = mTan(mDegtoRad(%this.tmpFov) * 0.5);
       
       %this->occlusion.setShaderConst("$tanHalfFovY", %tanHalfFOVY);
+      %this->filter.setShaderConst("$tanHalfFovY", %tanHalfFOVY);
+
+      %this->blurX.setShaderConst("$blurDir", "1 0");
+      %this->blurY.setShaderConst("$blurDir", "0 1");
    }
 }
 
@@ -75,12 +115,52 @@ function HBAOPostFX::onAdd(%this)
 
 function HBAOPostFX::onEnabled( %this )
 {
+   $AL::UseSSAOMask = true;
+   $PostFX::HBAOPostFX::Enabled = true;
+
    return true;
 }
 
 function HBAOPostFX::onDisabled( %this )
 {
+   $AL::UseSSAOMask = false;
+   $PostFX::HBAOPostFX::Enabled = false;
+
    return true;
+}
+
+function HBAOPostFX::populatePostFXSettings(%this)
+{
+   PostEffectEditorInspector.startGroup("HBAO - General");
+   PostEffectEditorInspector.addCallbackField("$PostFX::HBAOPostFX::Enabled", "Enabled", "bool", "", $PostFX::HBAOPostFX::Enabled, "", "toggleHBAOPostFX");
+   PostEffectEditorInspector.addField("$PostFX::HBAOPostFX::radius", "Radius", "float", "", $PostFX::HBAOPostFX::radius, "");
+   PostEffectEditorInspector.addField("$PostFX::HBAOPostFX::strength", "Strength", "float", "", $PostFX::HBAOPostFX::strength, "");
+   PostEffectEditorInspector.addField("$PostFX::HBAOPostFX::bias", "Bias", "range", "", $PostFX::HBAOPostFX::bias, "0 1 10");
+   PostEffectEditorInspector.endGroup();
+}
+
+function PostEffectEditorInspector::toggleHBAOPostFX(%this)
+{
+   if($PostFX::HBAOPostFX::Enabled && $pref::PostFX::EnableSSAO)
+      HBAOPostFX.enable();
+   else
+      HBAOPostFX.disable();
+}
+
+function HBAOPostFX::applyFromPreset(%this)
+{
+   if($PostFXManager::PostFX::Enable && $pref::PostFX::EnableSSAO)
+      %this.enable();
+   else
+      %this.disable();
+}
+
+function HBAOPostFX::savePresetSettings(%this)
+{
+   PostFXManager::savePresetSetting("$PostFX::HBAOPostFX::Enabled");
+   PostFXManager::savePresetSetting("$PostFX::HBAOPostFX::radius");
+   PostFXManager::savePresetSetting("$PostFX::HBAOPostFX::strength");
+   PostFXManager::savePresetSetting("$PostFX::HBAOPostFX::bias");
 }
 
 singleton PostEffect( HBAOPostFX )
@@ -88,12 +168,12 @@ singleton PostEffect( HBAOPostFX )
    enabled = false;
    allowReflectPass = false;
      
-   //renderTime = "PFXBeforeBin";
-   //renderBin = "ProbeBin";   
-   //renderPriority = 10;
+   renderTime = "PFXBeforeBin";
+   renderBin = "ProbeBin";   
+   renderPriority = 11;
 
    shader = Downscale2x_Shader;
-   stateBlock = HBAO_Downscale_StateBlock;
+   stateBlock = HBAO_Blur_StateBlock;
    texture[0] = "#deferred";
    target = "#downscaled_2x";
    targetScale = "0.5 0.5";
@@ -108,18 +188,70 @@ singleton PostEffect( HBAOPostFX )
       shader = HBAO_Shader;
       stateBlock = HBAO_StateBlock;
       texture[0] = "#downscaled_2x";
-      target = "#hbaoRaw";
+      target = "$outTex";
       targetFormat = "GFXFormatL8";
-      targetViewport = "PFXTargetViewport_NamedInTexture0";
+   };
+
+   new PostEffect()
+   {
+      internalName = "blurX";
+      allowReflectPass = false;
+
+      shader = Blur_Shader;
+      stateBlock = HBAO_StateBlock;
+      texture[0] = "$inTex";
+      texture[1] = "#downscaled_2x";
+      target = "$outTex";
+      targetFormat = "GFXFormatL8";
+   };
+
+   new PostEffect()
+   {
+      internalName = "blurY";
+      allowReflectPass = false;
+
+      shader = Blur_Shader;
+      stateBlock = HBAO_StateBlock;
+      texture[0] = "$inTex";
+      texture[1] = "#downscaled_2x";
+      target = "$outTex";
+      targetFormat = "GFXFormatL8";
    };
 
    new PostEffect()
    {
       allowReflectPass = false;
 
-      shader = PFX_PassthruShader;
+      shader = Upscale_Shader;
       stateBlock = HBAO_StateBlock;
-      texture[0] = "#hbaoRaw";
-      target = "$backBuffer";
+
+      texture[0] = "#deferred";
+      texture[1] = "$inTex";
+      texture[2] = "$inTex";
+      texture[3] = "#downscaled_2x";
+      target = "#ssaoMask";
    };
+};
+
+singleton ShaderData( HBAOVis_Shader )
+{
+   DXVertexShaderFile 	= $Core::CommonShaderPath @ "/postFX/postFxV.hlsl";
+   DXPixelShaderFile 	= "./hbaoDebugP.hlsl";   
+   
+   samplerNames[0] = "$aoMap";
+   
+   pixVersion = 3.0;
+};
+
+singleton PostEffect( HBAOVizPostFx )
+{     
+   enabled = false; 
+   allowReflectPass = false;
+        
+   shader = HBAOVis_Shader;
+   stateBlock = PFX_DefaultStateBlock;
+   
+   texture[0] = "#ssaoMask";
+   
+   target = "$backbuffer";
 };

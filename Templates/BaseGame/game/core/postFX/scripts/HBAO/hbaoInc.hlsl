@@ -26,6 +26,7 @@ struct HBAOVert
 {
    float3 pos        : POSITION;
    float2 uv         : TEXCOORD0;
+   float3 wsEyeRay   : TEXCOORD1;
 };
 
 struct HBAOVertToPix
@@ -33,4 +34,15 @@ struct HBAOVertToPix
    float4 hpos       : TORQUE_POSITION;
    float2 uv0         : TEXCOORD0;
    float4 NDCtoVSC   : TEXCOORD1;
+   float3 wsEyeRay   : TEXCOORD2;
 };
+
+float3 getVSPosition(float depth, float2 uv, float4 NDCtoVSC)
+{
+   return float3(-depth * (uv * NDCtoVSC.xy + NDCtoVSC.zw), -depth);
+}
+
+float2 getNDCPosition(float3 pos, float4 NDCtoVSC)
+{
+   return (pos.xy / pos.z - NDCtoVSC.zw) / NDCtoVSC.xy;
+}
